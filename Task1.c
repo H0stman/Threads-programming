@@ -5,16 +5,17 @@
  ***************************************************************************/
 
 #include <stdio.h>
+#include <pthread.h>
 
 #define MAX_SIZE 4096
 
 typedef double matrix[MAX_SIZE][MAX_SIZE];
 
-int	N;		/* matrix size		*/
-int	maxnum;		/* max number of element*/
-char	*Init;		/* matrix init type	*/
-int	PRINT;		/* print switch		*/
-matrix	A;		/* matrix A		*/
+int	N;		            /* matrix size		*/
+int	maxnum;		        /* max number of element*/
+char* Init;		        /* matrix init type	*/
+int	PRINT;		        /* print switch		*/
+matrix	A;		        /* matrix A		*/
 double	b[MAX_SIZE];	/* vector b             */
 double	y[MAX_SIZE];	/* vector y             */
 
@@ -25,41 +26,47 @@ void Print_Matrix(void);
 void Init_Default(void);
 int Read_Options(int, char **);
 
-int
-main(int argc, char **argv)
+int main(int argc, char **argv)
 {
     int i, timestart, timeend, iter;
 
-    Init_Default();		/* Init default values	*/
+    Init_Default();		        /* Init default values	*/
     Read_Options(argc,argv);	/* Read arguments	*/
-    Init_Matrix();		/* Init the matrix	*/
+    Init_Matrix();		        /* Init the matrix	*/
     work();
     if (PRINT == 1)
 	   Print_Matrix();
 }
 
-void
-work(void)
+void* threadWork(void* params)
 {
+    //Cast params to struct
+
+}
+
+void work(void)
+{
+    pthread_t* threads;
+
     int i, j, k;
+    unsigned int numThreads;
 
     /* Gaussian elimination algorithm, Algo 8.4 from Grama */
     for (k = 0; k < N; k++) { /* Outer loop */
-	    for (j = k+1; j < N; j++)
+	    for (j = k + 1; j < N; j++)
 	       A[k][j] = A[k][j] / A[k][k]; /* Division step */
 	    y[k] = b[k] / A[k][k];
 	    A[k][k] = 1.0;
-	    for (i = k+1; i < N; i++) {
-	        for (j = k+1; j < N; j++)
-		        A[i][j] = A[i][j] - A[i][k]*A[k][j]; /* Elimination step */
-	        b[i] = b[i] - A[i][k]*y[k];
+	    for (i = k + 1; i < N; i++) {
+	        for (j = k + 1; j < N; j++)
+		        A[i][j] = A[i][j] - A[i][k] * A[k][j]; /* Elimination step */
+	        b[i] = b[i] - A[i][k] * y[k];
 	        A[i][k] = 0.0;
 	    }
     }
 }
 
-void
-Init_Matrix()
+void Init_Matrix()
 {
     int i, j;
 
@@ -100,8 +107,7 @@ Init_Matrix()
         Print_Matrix();
 }
 
-void
-Print_Matrix()
+void Print_Matrix()
 {
     int i, j;
 
@@ -123,8 +129,7 @@ Print_Matrix()
     printf("\n\n");
 }
 
-void
-Init_Default()
+void Init_Default()
 {
     N = 2048;
     Init = "rand";
@@ -132,10 +137,9 @@ Init_Default()
     PRINT = 0;
 }
 
-int
-Read_Options(int argc, char **argv)
+int Read_Options(int argc, char **argv)
 {
-    char    *prog;
+    char* prog;
 
     prog = *argv;
     while (++argv, --argc > 0)
