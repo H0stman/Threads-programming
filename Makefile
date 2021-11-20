@@ -6,8 +6,8 @@ else
 endif
 
 ## Compile command variables
-FLAGS :=-Wpedantic -pedantic-errors -Wextra
-LIBS :=m
+FLAGS :=-Wpedantic -pedantic-errors -Wextra -g
+LIBS :=-lm -lpthread
 
 SRCS = $(wildcard *.c)
 PROGS = $(patsubst %.c,%,$(SRCS))
@@ -15,7 +15,7 @@ PROGS = $(patsubst %.c,%,$(SRCS))
 all: $(PROGS)
 
 %: %.c
-	$(CC) $(CFLAGS)  -o $@ $<
+	$(CC) $(FLAGS) -o $@ $< $(LIBS)
 
 clean:
 	$(DELETE) *.o $(PROGS)
