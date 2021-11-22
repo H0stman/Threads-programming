@@ -99,7 +99,6 @@ static void quick_sort(int* v, unsigned low, unsigned high)
 static void quick_sort_par(unsigned thread_count, unsigned low, unsigned high)
 {
 	pthread_t thread;
-	int errcode = -1;
 	unsigned pivot_index;
 
 	/* no need to sort a vector of zero or one element */
@@ -158,12 +157,12 @@ int main(int argc, char** argv)
 	quick_sort_par(MAX_THREADS, 0, MAX_ITEMS - 1);
 	clock_t end = clock();
 	double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
-	printf("Time par: %f\n", time_spent);
+	printf("Time par: %f s\n", time_spent);
 	init_array();
 	begin = clock();
 	quick_sort(v, 0, MAX_ITEMS - 1);
 	end = clock();
 	time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
-	printf("Time seq: %f\n", time_spent);
+	printf("Time seq: %f s\n", time_spent);
 	//print_array();
 }
