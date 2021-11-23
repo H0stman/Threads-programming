@@ -6,7 +6,7 @@ else
 endif
 
 ## Compile command variables
-FLAGS :=-Wpedantic -pedantic-errors -Wextra -g
+FLAGS :=-Wpedantic -pedantic-errors -Wextra -ggdb3
 LIBS :=-lm -lpthread
 
 SRCS = $(wildcard *.c)
@@ -18,4 +18,4 @@ all: $(PROGS)
 	$(CC) $(FLAGS) -o $@ $< $(LIBS)
 
 clean:
-	$(DELETE) *.o $(PROGS)
+	$(DELETE) $(PROGS)
