@@ -13,17 +13,17 @@
 #define MEGA (1024*1024)
 #define MAX_ITEMS (64*MEGA)
 #define swap(v, a, b) {unsigned tmp; tmp=v[a]; v[a]=v[b]; v[b]=tmp;}
-#define MAX_THREADS 8
+#define MAX_THREADS 4
 
-void* pass_args(void* args);
+static void* quick_sort_par(void* args);
 
 static int* v;
 
-struct t_data
+struct arg
 {
 	unsigned high;
 	unsigned low;
-	unsigned t;
+	unsigned thread_depth;
 };
 
 
@@ -96,73 +96,75 @@ static void quick_sort(int* v, unsigned low, unsigned high)
 }
 
 
-static void quick_sort_par(unsigned thread_count, unsigned low, unsigned high)
+static void* quick_sort_par(void* args)
 {
 	pthread_t thread;
 	unsigned pivot_index;
+	struct arg* t_args = args;
 
 	/* no need to sort a vector of zero or one element */
-	if (low >= high)
-		return;
+	if (t_args->low >= t_args->high)
+		return NULL;
 
 	/* select the pivot value */
-	pivot_index = (low + high) / 2;
+	pivot_index = (t_args->low + t_args->high) / 2;
 
 	/* partition the vector */
-	pivot_index = partition(v, low, high, pivot_index);
+	pivot_index = partition(v, t_args->low, t_args->high, pivot_index);
+
+	struct arg copy;
 
 	/* sort the two sub arrays */
-	if (low < pivot_index)
+	if (t_args->low < pivot_index)
 	{
-		if (thread_count > 1)
+		if (t_args->thread_depth > 1)
 		{
-			struct t_data* copy = malloc(sizeof(struct t_data)); //Make new argument struct for new thread
-			copy->t = thread_count / 2;
-			copy->low = low;
-			copy->high = pivot_index - 1;
-			pthread_create(&thread, NULL, pass_args, (void*)copy); //Struct is passed to helperfunction on new thread which "unpacks the arguments" and calls quick_sort
+			copy.thread_depth = t_args->thread_depth / 2;
+			copy.low = t_args->low;
+			copy.high = pivot_index - 1;
+			pthread_create(&thread, NULL, quick_sort_par, &copy);
 		}
 		else
-			quick_sort(v, low, pivot_index - 1);
+			quick_sort(v, t_args->low, pivot_index - 1);
 	}
 
-	if (pivot_index < high)
+	if (pivot_index < t_args->high)
 	{
-		if (thread_count > 1)
-		{
-			struct t_data* copy = malloc(sizeof(struct t_data)); //Make new argument struct for new thread
-			copy->t = thread_count / 2;
-			copy->low = pivot_index + 1;
-			copy->high = high;
-			pthread_create(&thread, NULL, pass_args, (void*)copy); //Struct is passed to helperfunction on new thread which "unpacks the arguments" and calls quick_sort
-		}
-		else
-			quick_sort(v, pivot_index + 1, high);
+
+		copy.low = pivot_index + 1;
+		copy.high = t_args->high;
+		copy.thread_depth = t_args->thread_depth;
+		quick_sort_par(&copy);
+
+		//quick_sort(v, pivot_index + 1, t_args->high);
 	}
+
 	pthread_join(thread, NULL); //Waits for thread t to terminate
 }
 
-void* pass_args(void* args)
-{
-	struct t_data* passed_arguments = (struct t_data*)args;
-	quick_sort_par(passed_arguments->t, passed_arguments->low, passed_arguments->high);
-	return NULL;
-}
+// void* pass_args(void* args)
+// {
+// 	struct t_data* passed_arguments = (struct t_data*)args;
+// 	quick_sort_par(passed_arguments->t, passed_arguments->low, passed_arguments->high);
+// 	return NULL;
+// }
 
 int main(int argc, char** argv)
 {
 	init_array();
 	//print_array();
+	struct arg args = { .thread_depth = MAX_THREADS, .low = 0, .high = MAX_ITEMS - 1 };
 	clock_t begin = clock();
-	quick_sort_par(MAX_THREADS, 0, MAX_ITEMS - 1);
+	quick_sort_par(&args);
 	clock_t end = clock();
 	double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
 	printf("Time par: %f s\n", time_spent);
-	init_array();
-	begin = clock();
-	quick_sort(v, 0, MAX_ITEMS - 1);
-	end = clock();
-	time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
-	printf("Time seq: %f s\n", time_spent);
+	// init_array();
+	// begin = clock();
+	//quick_sort(v, 0, MAX_ITEMS - 1);
+	// end = clock();
+	// time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
+	// printf("Time seq: %f s\n", time_spent);
 	//print_array();
+	return 0;
 }
