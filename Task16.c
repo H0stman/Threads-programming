@@ -1,9 +1,3 @@
-/***************************************************************************
- *
- * Sequential version of Gaussian elimination
- *
- ***************************************************************************/
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -212,7 +206,7 @@ void work(void)
 
     //Wait for all the work to be done, needs to be here since all threads get detached instead of joined.
     while(!Done);
-    
+
     free(divArgs);
     free(divReadyFlags);
 
