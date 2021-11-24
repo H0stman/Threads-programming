@@ -13,9 +13,7 @@
 #define MEGA (1024*1024)
 #define MAX_ITEMS (64*MEGA)
 #define swap(v, a, b) {unsigned tmp; tmp=v[a]; v[a]=v[b]; v[b]=tmp;}
-#define MAX_THREADS 4
-
-static void* quick_sort_par(void* args);
+#define MAX_THREADS 8
 
 static int* v;
 
@@ -25,7 +23,6 @@ struct arg
 	unsigned low;
 	unsigned thread_depth;
 };
-
 
 static void print_array(void)
 {
@@ -95,10 +92,9 @@ static void quick_sort(int* v, unsigned low, unsigned high)
 		quick_sort(v, pivot_index + 1, high);
 }
 
-
 static void* quick_sort_par(void* args)
 {
-	pthread_t thread;
+	pthread_t thread = PTHREAD_CREATE_JOINABLE;
 	unsigned pivot_index;
 	struct arg* t_args = args;
 
@@ -112,17 +108,17 @@ static void* quick_sort_par(void* args)
 	/* partition the vector */
 	pivot_index = partition(v, t_args->low, t_args->high, pivot_index);
 
-	struct arg copy;
+	struct arg new_t, this_t;
 
 	/* sort the two sub arrays */
 	if (t_args->low < pivot_index)
 	{
 		if (t_args->thread_depth > 1)
 		{
-			copy.thread_depth = t_args->thread_depth / 2;
-			copy.low = t_args->low;
-			copy.high = pivot_index - 1;
-			pthread_create(&thread, NULL, quick_sort_par, &copy);
+			new_t.thread_depth = t_args->thread_depth / 2;
+			new_t.low = t_args->low;
+			new_t.high = pivot_index - 1;
+			pthread_create(&thread, NULL, quick_sort_par, &new_t);
 		}
 		else
 			quick_sort(v, t_args->low, pivot_index - 1);
@@ -130,24 +126,19 @@ static void* quick_sort_par(void* args)
 
 	if (pivot_index < t_args->high)
 	{
-
-		copy.low = pivot_index + 1;
-		copy.high = t_args->high;
-		copy.thread_depth = t_args->thread_depth;
-		quick_sort_par(&copy);
-
-		//quick_sort(v, pivot_index + 1, t_args->high);
+		if (t_args->thread_depth > 1)
+		{
+			this_t.low = pivot_index + 1;
+			this_t.high = t_args->high;
+			this_t.thread_depth = t_args->thread_depth / 2;
+			quick_sort_par(&this_t);
+		}
+		else
+			quick_sort(v, pivot_index + 1, t_args->high);
 	}
 
 	pthread_join(thread, NULL); //Waits for thread t to terminate
 }
-
-// void* pass_args(void* args)
-// {
-// 	struct t_data* passed_arguments = (struct t_data*)args;
-// 	quick_sort_par(passed_arguments->t, passed_arguments->low, passed_arguments->high);
-// 	return NULL;
-// }
 
 int main(int argc, char** argv)
 {

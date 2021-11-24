@@ -6,7 +6,7 @@ else
 endif
 
 ## Compile command variables
-FLAGS :=-Wpedantic -pedantic-errors -Wextra -ggdb3
+FLAGS :=-Wpedantic -pedantic-errors -Wextra -O2
 LIBS :=-lm -lpthread
 
 SRCS = $(wildcard *.c)
