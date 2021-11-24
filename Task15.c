@@ -7,7 +7,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <pthread.h>
-#include <time.h>
 
 #define KILO (1024)
 #define MEGA (1024*1024)
@@ -137,25 +136,31 @@ static void* quick_sort_par(void* args)
 			quick_sort(v, pivot_index + 1, t_args->high);
 	}
 
-	pthread_join(thread, NULL); //Waits for thread t to terminate
+	pthread_join(thread, NULL);
 }
 
 int main(int argc, char** argv)
 {
-	init_array();
+
 	//print_array();
-	struct arg args = { .thread_depth = MAX_THREADS, .low = 0, .high = MAX_ITEMS - 1 };
-	clock_t begin = clock();
-	quick_sort_par(&args);
-	clock_t end = clock();
-	double time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
-	printf("Time par: %f s\n", time_spent);
-	// init_array();
-	// begin = clock();
-	//quick_sort(v, 0, MAX_ITEMS - 1);
-	// end = clock();
-	// time_spent = (double)(end - begin) / CLOCKS_PER_SEC;
-	// printf("Time seq: %f s\n", time_spent);
-	//print_array();
+
+	if (argc == 2)
+	{
+		init_array();
+		struct arg args =
+		{
+			.thread_depth = strtoul(argv[1], NULL, 10),
+			.low = 0,
+			.high = MAX_ITEMS - 1
+		};
+		quick_sort_par(&args);
+	}
+	else
+	{
+		init_array();
+		quick_sort(v, 0, MAX_ITEMS - 1);
+	}
+
+	// print_array();
 	return 0;
 }
