@@ -36,7 +36,7 @@ main(int argc, char **argv)
     Init_Matrix();		/* Init the matrix	*/
     work();
     if (PRINT == 1)
-	   Print_Matrix();
+	    Print_Matrix();
 }
 
 void
@@ -46,7 +46,6 @@ work(void)
 
     /* Gaussian elimination algorithm, Algo 8.4 from Grama */
     for (k = 0; k < N; k++) { /* Outer loop */
-        printf("%d\n", k);
 	    for (j = k+1; j < N; j++)
 	       A[k][j] = A[k][j] / A[k][k]; /* Division step */
 	    y[k] = b[k] / A[k][k];
@@ -98,8 +97,8 @@ Init_Matrix()
     }
 
     printf("done \n\n");
-    if (PRINT == 1)
-        Print_Matrix();
+    //if (PRINT == 1)
+        //Print_Matrix();
 }
 
 void

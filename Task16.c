@@ -29,10 +29,17 @@ int Read_Options(int, char**);
 void* division(void*);
 void* elimination(void*);
 
+unsigned int numThreads = 0;
 int main(int argc, char** argv)
 {
     int i, timestart, timeend, iter;
 
+    if (argc == 2)
+    {
+        printf("Test\n");
+        numThreads = strtoul(argv[1], NULL, 10);
+    }
+    
     Init_Default();		        /* Init default values	*/
     Read_Options(argc, argv);	/* Read arguments	*/
     Init_Matrix();		        /* Init the matrix	*/
@@ -46,10 +53,10 @@ typedef struct threadArgs {
     int k;
 } threadArgs;
 
-#define numThreads 30
-pthread_t threads[numThreads] = { 0 };
+//#define numThreads 7
+pthread_t threads[256] = { 0 };
 //An array of bools. Used to signal that a row is ready to be used in the division step.
-int* divReadyFlags;
+_Atomic int* divReadyFlags;
 //Keeps track of the current number of threads alive, so that we do not create more than numThreads.
 _Atomic unsigned int AliveThreads = 0;
 //Signals to the main thread when the last row is done. Is needed since all threads are detached.
@@ -59,51 +66,6 @@ _Atomic unsigned int Done = 0;
 pthread_mutex_t aliveMutex;
 //A mutex array used to lock a row when a thread is working on it during the elimination step.
 pthread_mutex_t* rowMutex;
-
-void* division(void* params)
-{
-    threadArgs* args = (threadArgs*)params;
-    int k = args->k;
-    int j;
-    for (j = k + 1; j < N; j++)
-    {
-        A[k][j] = A[k][j] / A[k][k];
-    }
-	       
-	y[k] = b[k] / A[k][k];
-	A[k][k] = 1.0;
-
-    //After division we let the division function start the elimination step.
-    threadArgs* elimArgs = malloc(sizeof(threadArgs));
-
-    elimArgs->k = k;
-
-    //If we can create more threads we do so, otherwise we do the function call in this current thread.
-    pthread_mutex_lock(&aliveMutex);
-    if (AliveThreads < numThreads)
-    {
-        elimArgs->threadStarted = 1;
-        pthread_create(&threads[AliveThreads], NULL, elimination, elimArgs);
-        pthread_detach(threads[AliveThreads]);
-        AliveThreads++;
-        pthread_mutex_unlock(&aliveMutex);
-    }
-    else
-    {
-        pthread_mutex_unlock(&aliveMutex);
-        elimArgs->threadStarted = 0;
-        elimination(elimArgs);
-    }
-
-    //If a thread was started to run this function we reduce the amount of live threads when we return here.
-    if (args->threadStarted)
-    {   
-        pthread_mutex_lock(&aliveMutex);
-        AliveThreads--;
-        pthread_mutex_unlock(&aliveMutex);
-    }
-    return NULL;
-}
 
 void* elimination(void* params)
 {
@@ -171,7 +133,7 @@ void work(void)
         pthread_mutex_init(&rowMutex[l], NULL);
     }
 
-    int i, j, k;
+    int k;
 
     threadArgs* divArgs = malloc(sizeof(threadArgs));
 
@@ -185,22 +147,37 @@ void work(void)
         }
         
         divArgs->k = k;
-        
-        //Decide whether to go into the dividing on a new thread or on the main thread.
+
+        int j;
+        double divider = 1.0 / A[k][k];
+        for (j = k + 1; j < N; j++)
+        {
+            A[k][j] = A[k][j] / A[k][k];
+        }
+            
+        y[k] = b[k] / A[k][k];
+        A[k][k] = 1.0;
+
+        //After division we let the division function start the elimination step.
+        threadArgs* elimArgs = malloc(sizeof(threadArgs));
+
+        elimArgs->k = k;
+
+        //If we can create more threads we do so, otherwise we do the function call in this current thread.
         pthread_mutex_lock(&aliveMutex);
         if (AliveThreads < numThreads)
         {
-            divArgs->threadStarted = 1;
-            pthread_create(&threads[AliveThreads], NULL, &division, divArgs);
+            elimArgs->threadStarted = 1;
+            pthread_create(&threads[AliveThreads], NULL, elimination, elimArgs);
             pthread_detach(threads[AliveThreads]);
             AliveThreads++;
-	        pthread_mutex_unlock(&aliveMutex);
+            pthread_mutex_unlock(&aliveMutex);
         }
         else
         {
             pthread_mutex_unlock(&aliveMutex);
-            divArgs->threadStarted = 0;
-            division(divArgs);
+            elimArgs->threadStarted = 0;
+            elimination(elimArgs);
         }
     }
 
@@ -262,8 +239,6 @@ void Init_Matrix()
     }
 
     printf("done \n\n");
-    if (PRINT == 1)
-        Print_Matrix();
 }
 
 void Print_Matrix()
