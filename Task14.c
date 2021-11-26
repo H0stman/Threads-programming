@@ -1,9 +1,3 @@
-/***************************************************************************
- *
- * Sequential version of Gaussian elimination
- *
- ***************************************************************************/
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,7 +5,7 @@
 #include <semaphore.h>
 #include <math.h>
 #include <time.h>
-
+#include <stdatomic.h>
 #define MAX_SIZE 4096
 
 typedef double matrix[MAX_SIZE][MAX_SIZE];
@@ -31,10 +25,15 @@ void Print_Matrix(void);
 void Init_Default(void);
 int Read_Options(int, char**);
 
+//Thread functions
+void* division(void*);
+void* elimination(void*);
+
+unsigned int numThreads = 7;
 int main(int argc, char** argv)
 {
     int i, timestart, timeend, iter;
-
+    
     Init_Default();		        /* Init default values	*/
     Read_Options(argc, argv);	/* Read arguments	*/
     Init_Matrix();		        /* Init the matrix	*/
@@ -43,416 +42,151 @@ int main(int argc, char** argv)
         Print_Matrix();
 }
 
-typedef struct Job {
-    int handled;    //0 if the job is handled by the thread and 1 if it has been.
-    int typeOfJob;  //0 for division, 1 for elimination
-    int args[4];
-} Job;
-
-#define numThreads 1
-Job jobQueue[numThreads] = { 0 };
-
-const int minElemsPerThread = 200;
-
-int terminateThreads = 0;
-pthread_mutex_t queueMutex[numThreads] = { 0 };
-
-int condCount = 0;
-_Atomic int atomCounter = 0;
-
-void doJob(Job* job)
-{
-    switch (job->typeOfJob)
-    {
-        case 0: //Division step
-        {
-            int elementsToUpdate = job->args[0];
-            int k = job->args[1];
-            int startingIndex = job->args[2];
-
-            //If it is the last job on the row we have to adjust the amount of index' to update.
-            if (startingIndex + elementsToUpdate > N)
-            {
-                startingIndex = N - startingIndex;
-            }
-
-            double kElem = 1.0 / A[k][k];
-            for (size_t j = startingIndex; j < elementsToUpdate; j++)
-            {
-                A[k][j] = A[k][j] * kElem;
-            }
-            
-            atomCounter++;
-            break;
-        }
-        case 1: //Elimination step
-        {
-            int count = job->args[0];
-            int k = job->args[1];
-            int i = job->args[2];
-            int j = job->args[3];
-            for (size_t l = 0; l < count; l++)
-            {
-                //Break out of the loop and dont update if we get outside the triangle.
-                //Can only happen on the last part of each diagonal
-                if (j < i)
-                {
-                    break;
-                }
-                A[i][j] = A[i][j] - A[i][k] * A[k][j]; // Elimination step
-
-                //Move the indexes to the next element
-                i += 1;
-                j -= 1;
-            }
-            atomCounter++;
-            break;
-        }
-        default:
-        {
-            break;
-        }
-    }
-}
-
 typedef struct threadArgs {
-    int id;
+    int threadStarted;
+    int k;
 } threadArgs;
 
-void* waitForJob(void* params)
+//#define numThreads 7
+pthread_t threads[256] = { 0 };
+//An array of bools. Used to signal that a row is ready to be used in the division step.
+_Atomic int* divReadyFlags;
+//Keeps track of the current number of threads alive, so that we do not create more than numThreads.
+unsigned int AliveThreads = 0;
+//Signals to the main thread when the last row is done. Is needed since all threads are detached.
+_Atomic unsigned int Done = 0;
+
+//The mutex used to secure the AliveThreads variable.
+pthread_mutex_t aliveMutex;
+//A mutex array used to lock a row when a thread is working on it during the elimination step.
+pthread_mutex_t* rowMutex;
+
+void* elimination(void* params)
 {
-    struct threadArgs* args = (threadArgs*)params;
-    int id = args->id;
-
-    while (1)
-    {
-        Job currentJob;
-        int gotJob = 0;
-
-        //pthread_mutex_lock(&(queueMutex[id]));
-        if (jobQueue[id].handled == 0)
+    threadArgs* args = (threadArgs*)params;
+    int k = args->k;
+    int j;
+    int i;
+    //During elimination we have to lock the row we are on. But before we unlock it we also have to lock the next row.
+    for (i = k + 1; i < N; i++) {
+        if (i == k + 1)
         {
-            currentJob = jobQueue[id];
-            jobQueue[id].handled = 1;
-            //pthread_mutex_unlock(&(queueMutex[id]));
-
-            doJob(&currentJob);
-        }
-        else
-        {
-            //pthread_mutex_unlock(&(queueMutex[id]));
-        }
-
-        if (terminateThreads)
-        {
-            break;
+            pthread_mutex_lock(&rowMutex[i]);
         }
         
+	    for (j = k + 1; j < N; j++)
+        {
+            A[i][j] = A[i][j] - A[i][k] * A[k][j];
+        }
+		        
+	    b[i] = b[i] - A[i][k] * y[k];
+	    A[i][k] = 0.0;
+        if (i + 1 != N)
+        {
+            pthread_mutex_lock(&rowMutex[i + 1]);
+        }
+        pthread_mutex_unlock(&rowMutex[i]);
+        //Set the current row as being ready for dividing if it is the first row we handled.
+        //This means that the row "i" will not have any more elimination work done on it.
+        if (i == k + 1)
+        {
+            divReadyFlags[i] = 1;
+        }
+	}
+
+    //If a thread was started to run this function we reduce the amount of live threads when we return here.
+    if (args->threadStarted)
+    {   
+        pthread_mutex_lock(&aliveMutex);
+        AliveThreads--;
+        pthread_mutex_unlock(&aliveMutex);
     }
+
     free(args);
+
+    //If its the last row we signal that we are now done.
+    if (k == N - 1)
+    {
+        Done = 1;
+    }
+    return NULL;
 }
-
-double divisionTime = 0.0;
-size_t divisionCount = 0;
-
-size_t divisionCountTwo = 0;
-
-double divisionTimeTwo = 0.0;
-double divisionTimeTwoOne = 0.0;
-double divisionTimeTwoTwo = 0.0;
-double divisionTimeTwoThree = 0.0;
-double divisionTimeThree = 0.0;
-
-double elimTime = 0.0;
-double elimTimeTwo = 0.0;
-double elimTimeThree = 0.0;
-double elimTimeFour = 0.0;
-size_t eliminationCount = 0;
-
-double elimTimeColumn = 0.0;
-size_t eliminationCountColumn = 0;
 
 void work(void)
 {
-    pthread_t threads[numThreads];
-    for (size_t l = 0; l < numThreads; l++)
-    {
-        pthread_mutex_init(&(queueMutex[l]), NULL);
-
-        //Set all the jobs to handled so that the threads wait if they get to the conditional and the main thread has not assigned work yet.
-        jobQueue[l].handled = 1;
-
-        threadArgs* args = malloc(sizeof(struct threadArgs));
-        args->id = l;
-        if (pthread_create(&threads[l], NULL, &waitForJob, args) != 0)
-        {
-            perror("Could not create thread.\n");
-        }
-    }
+    pthread_mutex_init(&aliveMutex, NULL);
     
-    int i, j, k;
+    divReadyFlags = malloc(sizeof(int) * N);
+    memset(divReadyFlags, 0, sizeof(divReadyFlags));
+    
+    rowMutex = malloc(sizeof(pthread_mutex_t) * N);
+    memset(rowMutex, 0, sizeof(rowMutex));
 
-    //Division starts here.
-    int minElems = numThreads * minElemsPerThread;
-    float oneDivNumThreads = 1.0 / (float)numThreads;
-    for (k = 0; k < N; k++) //For every row.     
+    for (int l = 0; l < N; l++)
     {
-        printf("%d\n", k);
-        //divisionCount++;
-        clock_t startDiv_t = clock();
-        
-        int totalElems = N - (k + 1);
-        
-        int nrOfElems;
-        if (totalElems > minElems)
+        pthread_mutex_init(&rowMutex[l], NULL);
+    }
+
+    int k;
+
+    threadArgs* divArgs = malloc(sizeof(threadArgs));
+
+    //Here the algorithm starts
+    for (k = 0; k < N; k++)
+    {
+        //If we are not on the first row we wait until the row is flagged as being ready for dividing.
+        if (k != 0)
         {
-            nrOfElems = (int)(totalElems * oneDivNumThreads) + 1;
+            while(!divReadyFlags[k]);
+        }
+        
+        divArgs->k = k;
+
+        int j;
+        double divider = 1.0 / A[k][k];
+        for (j = k + 1; j < N; j++)
+        {
+            A[k][j] = A[k][j] / A[k][k];
+        }
+            
+        y[k] = b[k] / A[k][k];
+        A[k][k] = 1.0;
+
+        //After division we let the division function start the elimination step.
+        threadArgs* elimArgs = malloc(sizeof(threadArgs));
+
+        elimArgs->k = k;
+
+        //If we can create more threads we do so, otherwise we do the function call in this current thread.
+        pthread_mutex_lock(&aliveMutex);
+        if (AliveThreads < numThreads)
+        {
+            elimArgs->threadStarted = 1;
+            pthread_create(&threads[AliveThreads], NULL, elimination, elimArgs);
+            pthread_detach(threads[AliveThreads]);
+            AliveThreads++;
+            pthread_mutex_unlock(&aliveMutex);
         }
         else
         {
-            nrOfElems = minElemsPerThread;
-        }
-
-        j = k + 1; //j is starting element
-        size_t l = 0;
-        for (l; l < numThreads; l++)
-        {
-            //divisionCountTwo++;
-            //At the end there will be less than 8 elems to calculate. In this case we break out of the for loop.
-            if (j >= N)
-            {
-                break;
-            }
-
-            /*
-            Job job = {
-                .handled = 0
-                .typeOfJob = 0,
-                .args[0] = nrOfElems,   //How many elements it should calculate.
-                .args[1] = k,           //What row it is on.
-                .args[2] = j,           //Starting index on the row.
-                .args[3] = 0
-            };
-            */
-            
-            //pthread_mutex_lock(&(queueMutex[l]));
-            
-            jobQueue[l].typeOfJob = 0;
-            jobQueue[l].args[0] = nrOfElems;
-            jobQueue[l].args[1] = k;
-            jobQueue[l].args[2] = j;
-            jobQueue[l].handled = 0;
-            //pthread_mutex_unlock(&(queueMutex[l]));
-            
-            j += nrOfElems;  //Move on the row.
-        }
-        
-        condCount = l;
-        y[k] = b[k] / A[k][k];
-
-        while (atomCounter != condCount);
-        atomCounter = 0;
-
-        A[k][k] = 1.0f;
-
-        clock_t endDiv_t = clock();
-        divisionTime += (double)(endDiv_t - startDiv_t) / CLOCKS_PER_SEC;
-        //printf("Division time: %f\n", (double)(endDiv_t - startDiv_t) / CLOCKS_PER_SEC);
-
-        //Elimination starts here
-        i = k + 1; //Next row from the one we are on.
-        int index = 1;
-        for (j = k + 1; j < N; j++) //For every element on the next row.
-        {
-            //eliminationCount++;
-            clock_t startElim_t = clock();
-            //Calculate number of elements to calculate in this "batch"
-            
-            int totalElemsElim = ceil((float)index * 0.5f);
-            
-            int nrOfElemsElim;
-            if (totalElemsElim > minElems)
-            {
-                nrOfElemsElim = (int)(totalElemsElim * oneDivNumThreads) + 1;
-            }
-            else
-            {
-                nrOfElemsElim = minElemsPerThread;
-            }
-            
-            clock_t endElim_t = clock();
-            elimTime += (double)(endElim_t - startElim_t) / CLOCKS_PER_SEC;
-
-            startElim_t = clock();
-            //Start a batch.
-            int yi = i; //index
-            int xi = j; //index
-            size_t l = 0;
-            for (l; l < numThreads; l++)
-            {
-                //If the x-coordinate is smaller than the y-coordinate we are outside our triangle.
-                if (xi < yi)
-                {
-                    break;
-                }
-                
-                /*
-                Job job = {
-                    .handled = 0,
-                    .typeOfJob = 1,             //Type of job, elimination in this case
-                    .args[0] = nrOfElemsElim,  //Number of elements to calculate in this thread.
-                    .args[1] = k,               //Current division row.
-                    .args[2] = yi,              //Starting element y-coordinate
-                    .args[3] = xi               //Starting element x-coordinate
-                };
-                */
-
-               //pthread_mutex_lock(&(queueMutex[l]));
-                jobQueue[l].typeOfJob = 1;
-                jobQueue[l].args[0] = nrOfElemsElim;
-                jobQueue[l].args[1] = k;
-                jobQueue[l].args[2] = yi;
-                jobQueue[l].args[3] = xi;
-                jobQueue[l].handled = 0;
-                //pthread_mutex_unlock(&(queueMutex[l]));
-
-                //Move the starting coordinate for the next thread
-                yi += nrOfElemsElim;
-                xi -= nrOfElemsElim;
-            }
-            condCount = l;
-            endElim_t = clock();
-            elimTimeTwo += (double)(endElim_t - startElim_t) / CLOCKS_PER_SEC;
-
-            startElim_t = clock();
-            
-            while (atomCounter != condCount);
-            atomCounter = 0;
-
-
-            endElim_t = clock();
-            elimTimeThree += (double)(endElim_t - startElim_t) / CLOCKS_PER_SEC;
-
-            startElim_t = clock();
-            
-            //If the last element we updated was on the diagonal we set the element to the left of it to 0.0.
-            int lastItemRow = yi + nrOfElems;
-            int lastItemColumn = xi - nrOfElems;
-            if (lastItemRow == lastItemColumn)
-            {
-                b[lastItemRow] = b[lastItemRow] - A[lastItemRow][lastItemColumn] * y[lastItemColumn];
-                A[lastItemRow][lastItemColumn] = 0.0f;
-            }
-
-            endElim_t = clock();
-
-            //printf("Elim time 1: %f\n", (double)(endDiv_t - startDiv_t) / CLOCKS_PER_SEC);
-            index++;
-            elimTimeFour += (double)(endElim_t - startElim_t) / CLOCKS_PER_SEC;
-        }
-        j--; //Reduce j by one to be on the last column of the matrix.
-        //We will now go through the last column and do the elimination step of those diagonals.
-        index = N - (k + 2);
-        for (i = k + 2; i < N; i++)
-        {
-            clock_t startElim_t = clock();
-
-            int totalElemsElim = ceil((float)index * 0.5f);
-
-            int nrOfElemsElim;
-            if (totalElemsElim > minElems)
-            {
-                nrOfElemsElim = (int)(totalElemsElim * oneDivNumThreads) + 1;
-            }
-            else
-            {
-                nrOfElemsElim = minElemsPerThread;
-            }
-            
-            //Start a batch.
-            int yi = i; //index
-            int xi = j; //index
-            size_t l = 0;
-            for (l; l < numThreads; l++)
-            {
-                //If the x-coordinate is smaller than the y-coordinate we are outside our triangle.
-                if (xi < yi)
-                {
-                    break;
-                }
-
-                /*
-                Job job = {
-                    .typeOfJob = 1,             //Type of job, elimination in this case
-                    .args[0] = elemsPerThread,  //Number of elements to calculate in this thread.
-                    .args[1] = k,               //Current division row.
-                    .args[2] = yi,              //Starting element y-coordinate
-                    .args[3] = xi               //Starting element x-coordinate
-                };
-                */
-               
-                //pthread_mutex_lock(&(queueMutex[l]));
-                jobQueue[l].typeOfJob = 1;
-                jobQueue[l].args[0] = nrOfElemsElim;
-                jobQueue[l].args[1] = k;
-                jobQueue[l].args[2] = yi;
-                jobQueue[l].args[3] = xi;
-                jobQueue[l].handled = 0;
-                //pthread_mutex_unlock(&(queueMutex[l]));
-
-                //Move the starting coordinate for the next thread
-                yi += nrOfElemsElim;
-                xi -= nrOfElemsElim;
-            }
-            condCount = l;
-
-            while (atomCounter != condCount);
-            atomCounter = 0;
-            
-            //If the last element we updated was on the diagonal we set the element to the left of it to 0.0.
-            int lastItemRow = yi + nrOfElems;
-            int lastItemColumn = xi - nrOfElems;
-            if (lastItemRow == lastItemColumn)
-            {
-                b[lastItemRow] = b[lastItemRow] - A[lastItemRow][lastItemColumn] * y[lastItemColumn];
-                A[lastItemRow][lastItemColumn] = 0.0f;
-            }
-
-            clock_t endElim_t = clock();
-
-            elimTimeColumn += (double)(endElim_t - startElim_t) / CLOCKS_PER_SEC;
-            //printf("Elim time 2: %f\n", (double)(endDiv_t - startDiv_t) / CLOCKS_PER_SEC);
-            index--;
+            pthread_mutex_unlock(&aliveMutex);
+            elimArgs->threadStarted = 0;
+            elimination(elimArgs);
         }
     }
-    
-    terminateThreads = 1;
-    for (size_t l = 0; l < numThreads; l++)
+
+    //Wait for all the work to be done, needs to be here since all threads get detached instead of joined.
+    while(!Done);
+
+    free(divArgs);
+    free(divReadyFlags);
+
+    for (int l = 0; l < N; l++)
     {
-        if (pthread_join(threads[l], NULL) != 0)
-        {
-            perror("Could not join thread.\n");
-        }
+        pthread_mutex_destroy(&rowMutex[l]);
     }
 
-    for (size_t l = 0; l < numThreads; l++)
-    {
-        pthread_mutex_destroy(&(queueMutex[l]));
-    }
-    
-    //printf("Average division time one: %f\n", divisionTime / divisionCount);
-    //printf("Average division time two: %f\n", divisionTimeTwo / divisionCountTwo);
-    //printf("Average division time twoone: %f\n", divisionTimeTwoOne / divisionCountTwo);
-    //printf("Average division time twotwo: %f\n", divisionTimeTwoTwo / divisionCountTwo);
-    //printf("Average division time three: %f\n", divisionTimeThree / divisionCount);
-    //printf("Average elimination time: %f\n", elimTime / eliminationCount);
-    //printf("Average elimination column time: %f\n", elimTimeColumn / eliminationCountColumn);
-    printf("Division time: %f\n", divisionTime);
-    printf("Elimination time 1: %f\n", elimTime);
-    printf("Elimination time 2: %f\n", elimTimeTwo);
-    printf("Elimination time 3: %f\n", elimTimeThree);
-    printf("Elimination time 4: %f\n", elimTimeFour);
-    printf("Elimination column time: %f\n", elimTimeColumn);
+    pthread_mutex_destroy(&aliveMutex);
 }
 
 void Init_Matrix()
@@ -499,8 +233,6 @@ void Init_Matrix()
     }
 
     printf("done \n\n");
-    if (PRINT == 1)
-        Print_Matrix();
 }
 
 void Print_Matrix()
