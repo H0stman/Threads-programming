@@ -5,7 +5,7 @@
 #include <semaphore.h>
 #include <math.h>
 #include <time.h>
-
+#include <stdatomic.h>
 #define MAX_SIZE 4096
 
 typedef double matrix[MAX_SIZE][MAX_SIZE];
@@ -29,16 +29,10 @@ int Read_Options(int, char**);
 void* division(void*);
 void* elimination(void*);
 
-unsigned int numThreads = 0;
+unsigned int numThreads = 7;
 int main(int argc, char** argv)
 {
     int i, timestart, timeend, iter;
-
-    if (argc == 2)
-    {
-        printf("Test\n");
-        numThreads = strtoul(argv[1], NULL, 10);
-    }
     
     Init_Default();		        /* Init default values	*/
     Read_Options(argc, argv);	/* Read arguments	*/
@@ -58,7 +52,7 @@ pthread_t threads[256] = { 0 };
 //An array of bools. Used to signal that a row is ready to be used in the division step.
 _Atomic int* divReadyFlags;
 //Keeps track of the current number of threads alive, so that we do not create more than numThreads.
-_Atomic unsigned int AliveThreads = 0;
+unsigned int AliveThreads = 0;
 //Signals to the main thread when the last row is done. Is needed since all threads are detached.
 _Atomic unsigned int Done = 0;
 
